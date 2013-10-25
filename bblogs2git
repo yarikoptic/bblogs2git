@@ -46,6 +46,11 @@ _debug() {
 	[ "$debuglevel" -ge $level ] && echo "D: $@" || :
 }
 
+git_tidyup() {
+	git reset --hard
+	git clean -dfx
+}
+
 check_and_init_git() {
 	gitdir=$1
 	# check that we have a git repository
@@ -61,8 +66,7 @@ check_and_init_git() {
 		git add $processedfile; git commit -m "Initial commit -- nothing is yet imported"
 	else
 		_info "Git repository exists.  We will just tidy up"
-		git reset --hard
-		git clean -dfx
+		git_tidyup
 	fi
 	cd $curdir
 }
@@ -90,7 +94,14 @@ add_build() {
 	cp -p $topdir/$builder/$num-* .
 	if /bin/ls *.bz2 &>/dev/null ; then
 		_debug 4 "Extracting"
-		for f in *.bz2; do bunzip2 $f; done
+		for f in *.bz2; do
+			if [ -e ${f%.bz2} ]; then
+				echo "Both extracted and .bz2 files exist -- we must have got already in currently running bots. Cleaning up and exiting"
+				git_tidyup
+				exit 1
+			fi
+			bunzip2 $f;
+		done
 	fi
 	# strip number from the names
 	_debug 4 "Stripping numbers"
