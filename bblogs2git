@@ -1,0 +1,124 @@
+#!/bin/bash
+#emacs: -*- mode: shell-script; c-basic-offset: 4; tab-width: 4; indent-tabs-mode: t -*- 
+#ex: set sts=4 ts=4 sw=4 noet:
+#
+# A little script to import all (or just updated) buildbot logs under GIT
+# control.  Ordering of file will happen using mtime on them
+#
+# COPYRIGHT: Yaroslav Halchenko 2013
+#
+# LICENSE: MIT
+#
+#  Permission is hereby granted, free of charge, to any person obtaining a copy
+#  of this software and associated documentation files (the "Software"), to deal
+#  in the Software without restriction, including without limitation the rights
+#  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+#  copies of the Software, and to permit persons to whom the Software is
+#  furnished to do so, subject to the following conditions:
+#
+#  The above copyright notice and this permission notice shall be included in
+#  all copies or substantial portions of the Software.
+#
+#  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+#  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+#  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+#  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+#  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+#  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+#  THE SOFTWARE.
+#
+
+set -e
+
+bbdir=.
+gitdir=bblogs
+
+processedfile=.processedbuilds
+
+debuglevel=0
+
+_info() {
+	echo "I: $@"
+}
+
+_debug() {
+	level=$1; shift
+	[ "$debuglevel" -ge $level ] && echo "D: $@" || :
+}
+
+check_and_init_git() {
+	gitdir=$1
+	# check that we have a git repository
+	mkdir -p "$gitdir"
+	if [ ! -d "$gitdir/.git" ]; then
+		_info "Initializing git under $gitdir"
+		# Initial git repository
+		curdir=`pwd`
+		cd $gitdir
+		git init
+		echo "Buildbot logs from `hostname`" > .git/description
+		echo "This file will contain processed builds" > $processedfile
+		git add $processedfile; git commit -m "Initial commit -- nothing is yet imported"
+		cd $curdir
+	else
+		_debug 1 "Git repository exists"
+	fi
+}
+
+add_build() {
+	gitdir="$1"
+	build="$2"
+	builder="${build%/*}"
+	num="${build##*/}"
+
+	# sanitize builder a bit
+	builder=${builder#./}
+
+	topdir=`pwd`
+	_debug 3 "Processing build #$num for $builder"
+	cd "$gitdir"
+
+	_debug 4 "Removing previous files"
+	[ -e "$builder" ] && git rm -rf $builder >/dev/null || : #  remove old logs
+
+	mkdir -p "$builder"
+	cd "$builder"
+
+	_debug 4 "Copying $topdir/$builder/$num-*"
+	cp -p $topdir/$builder/$num-* .
+	if /bin/ls *.bz2 | grep -q . ; then
+		_debug 4 "Extracting"
+		for f in *.bz2; do bunzip2 $f; done
+	fi
+	# strip number from the names
+	_debug 4 "Stripping numbers"
+	for f in $num-*; do mv "$f" "${f/$num-/}"; done
+	git add *
+
+	# was there non-0 exit code?
+	grep -q 'program finished with exit code [^0]*$' * && status=FAILED || status=PASSED
+	cd ..
+	mtime="$(stat $topdir/$build | sed -ne '/^Modify/s/Modify: //gp')"
+	echo "$build" >> $processedfile
+	git add $processedfile >/dev/null
+	git commit -m "[$status] $num  $builder  from  $mtime" >/dev/null
+	cd "$topdir"
+}
+
+
+check_and_init_git "$gitdir"
+
+# collect all builds sorted by time
+find . -regextype 'grep' -regex '.*/[0-9]*' -type f \
+| xargs /bin/ls -t --reverse \
+| while read b; do
+	_debug 2 "Processing $b"
+	if ! grep -qe "^$b\$" $gitdir/$processedfile; then
+		_info "$b -- adding"
+		add_build "$gitdir" "$b"
+	else
+		#_debug 2 "Skipping $b - already processed"
+		_info "$b -- skipping (already processed)"
+	fi
+done
+#cd $gitdir; git log
