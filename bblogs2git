@@ -50,19 +50,21 @@ check_and_init_git() {
 	gitdir=$1
 	# check that we have a git repository
 	mkdir -p "$gitdir"
-	if [ ! -d "$gitdir/.git" ]; then
+	curdir=`pwd`
+	cd $gitdir
+	if [ ! -d ".git" ]; then
 		_info "Initializing git under $gitdir"
 		# Initial git repository
-		curdir=`pwd`
-		cd $gitdir
 		git init
 		echo "Buildbot logs from `hostname`" > .git/description
 		echo "This file will contain processed builds" > $processedfile
 		git add $processedfile; git commit -m "Initial commit -- nothing is yet imported"
-		cd $curdir
 	else
-		_debug 1 "Git repository exists"
+		_info "Git repository exists.  We will just tidy up"
+		git reset --hard
+		git clean -dfx
 	fi
+	cd $curdir
 }
 
 add_build() {
@@ -86,7 +88,7 @@ add_build() {
 
 	_debug 4 "Copying $topdir/$builder/$num-*"
 	cp -p $topdir/$builder/$num-* .
-	if /bin/ls *.bz2 | grep -q . ; then
+	if /bin/ls *.bz2 &>/dev/null ; then
 		_debug 4 "Extracting"
 		for f in *.bz2; do bunzip2 $f; done
 	fi
@@ -114,11 +116,11 @@ find . -regextype 'grep' -regex '.*/[0-9]*' -type f \
 | while read b; do
 	_debug 2 "Processing $b"
 	if ! grep -qe "^$b\$" $gitdir/$processedfile; then
-		_info "$b -- adding"
+		_info "add  $b"
 		add_build "$gitdir" "$b"
 	else
 		#_debug 2 "Skipping $b - already processed"
-		_info "$b -- skipping (already processed)"
+		_info "skip $b (already processed)"
 	fi
 done
 #cd $gitdir; git log
